@@ -1,16 +1,13 @@
-const xml2js = require("xml2js");
-const builder = new xml2js.Builder();
-const parseString = xml2js.parseString;
 const fs = require("fs");
 const moment = require("moment");
 const cheerio = require("cheerio");
 
-const path = "";
+const path = "http://lwt3test.lsu.edu/sites/default/files/featured_images";
 
 const xml = fs.readFileSync("./file.xml");
 
 const $ = cheerio.load(xml, {
-  xml: { xmlMode: true, normalizeWhitespace: true },
+    xml: { xmlMode: true, normalizeWhitespace: true },
 });
 
 $("wp\\:author").remove();
@@ -18,84 +15,95 @@ $("wp\\:category").remove();
 $("wp\\:tag").remove();
 $("wp\\:term").remove();
 
-$("content\\:encoded").text();
+console.log("-------------------------------------------------------")
+console.log("--------------------Modifying URLs---------------------")
+console.log("-------------------------------------------------------")
 
-// console.log($("wp\\:author").text());
+$("item").each((_, element) => {
+    const postType = $(element).find("wp\\:post_type").text()
+    const year = moment($(element).find("pubDate").text()).get("year");
 
-//fs.writeFileSync("./modified.xml", $.xml());
+    if (year < 2021) {
+        $(element).remove()
+        return;
+    }
 
-// parseString(xml, function (err, result) {
-//   const modified = result;
+    if (postType === 'post') {
 
-//   delete modified.rss.channel[0]["wp:author"];
-//   delete modified.rss.channel[0]["wp:category"];
-//   delete modified.rss.channel[0]["wp:tag"];
-//   delete modified.rss.channel[0]["wp:term"];
+        const content = $(element).find("content\\:encoded")
 
-//   const items = [];
+        let body = content.text();
 
-//   modified.rss.channel[0].item.forEach((post) => {
-//     const publishedDate = moment(post.pubDate[0]);
+        const html = cheerio.load(body, null, false);
 
-//     if (!publishedDate) {
-//       return;
-//     }
+        html("img").each((_, img) => {
+            const src = html(img).attr("src");
 
-//     const year = publishedDate.get("year");
-//     const postType = post["wp:post_type"][0];
+            const newSrc = changeURL(src)
 
-//     if (
-//       (postType == "attachment" || postType == "post") &&
-//       Number(year) >= 2021
-//     ) {
-//       items.push(post);
-//     }
-//   });
+            html(img).attr("src", newSrc);
+        });
 
-//   items.forEach((item) => {
-//     if (item["wp:post_type"] == "post") {
-//       const $ = cheerio.load(item["content:encoded"][0]);
+        $(element).find("content\\:encoded").replaceWith("<content:encoded><![CDATA[" + html.html() + "]]></content:encoded>");
+    }
 
-//       $("img").each((i, element) => {
-//         const src = $(element).attr("src");
+    if (postType === 'attachment') {
 
-//         const split = src.split("/");
-//         const file = split[split.length - 1];
+        const attachmentURL = $(element).find("wp\\:attachment_url")
 
-//         const fileSplit = file.split(".");
-//         const fileName = fileSplit[0];
-//         const fileExtension = fileSplit[1];
+        const src = attachmentURL.text()
+        const newSrc = changeURL(src, true)
 
-//         const newFileName = stripFileName(fileName);
+        attachmentURL.text(newSrc)
 
-//         $(element).attr("src", path + "/" + newFileName + "." + fileExtension);
-//       });
+    }
+})
 
-//       item["content:encoded"][0] = String($.html());
-//     }
-//   });
+console.log("-------------------------------------------------------")
+console.log("-------------------Writing XML file--------------------")
+console.log("-------------------------------------------------------")
+fs.writeFileSync("./modified.xml", $.xml());
 
-//   modified.rss.channel[0].item = items;
+function changeURL(src, keepDomain = false) {
 
-//   console.log(modified.rss.channel[0].item[0]);
+    // Split by "/"
+    const split = src.split("/");
 
-//   //const xml = builder.buildObject(modified);
+    // Get file (name + extension)
+    const file = split[split.length - 1];
 
-//   //fs.writeFileSync("./modified.xml", xml);
-// });
+    const newFileName = stripFileName(file);
 
-function stripFileName(fileName) {
-  // Remove everything following "scaled"
-  let newFileName = fileName.split("-scaled")[0];
+    let newSrc;
+    if (keepDomain) {
+        newSrc = split.slice(0, split.length - 1).join("/") + "/" + newFileName
+    } else {
+        newSrc = path + "/" + newFileName;
+    }
 
-  // Remove appended resolution
-  const regex = new RegExp("([0-9]{0,4})x([0-9]{0,4})");
-  const splitByDash = newFileName.split("-");
-  const resolution = splitByDash.at(-1);
-  if (regex.test(resolution)) {
-    splitByDash.pop();
-    newFileName = splitByDash.join("-");
-  }
+    return newSrc;
+}
 
-  return newFileName;
+function stripFileName(file) {
+
+    // Split the name and extension
+    const fileSplit = file.split(".");
+
+    // Store name and extension
+    const fileName = fileSplit[0];
+    const fileExtension = fileSplit[1];
+
+    // Remove everything after "-scaled"
+    let newFileName = fileName.split("-scaled")[0];
+
+    // Remove appended resolution
+    const regex = new RegExp("([0-9]{0,4})x([0-9]{0,4})");
+    const splitByDash = newFileName.split("-");
+    const resolution = splitByDash.at(-1);
+    if (regex.test(resolution)) {
+        splitByDash.pop();
+        newFileName = splitByDash.join("-");
+    }
+
+    return newFileName + "." + fileExtension;
 }
