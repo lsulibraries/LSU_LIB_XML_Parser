@@ -2,12 +2,13 @@ const fs = require("fs");
 const moment = require("moment");
 const cheerio = require("cheerio");
 
-const path = "http://lwt3test.lsu.edu/sites/default/files/featured_images";
+const path = "https://libwebtest3.lsu.edu/sites/default/files/featured_images";
 
 const xml = fs.readFileSync("./file.xml");
 
 const $ = cheerio.load(xml, {
-    xml: { xmlMode: true, normalizeWhitespace: true },
+    decodeEntities: true,
+    xml: true,
 });
 
 $("wp\\:author").remove();
@@ -30,11 +31,30 @@ $("item").each((_, element) => {
 
     if (postType === 'post') {
 
+        const title = $(element).find("title")
+        const parsedTitle = cheerio.load(title.text()).text()
+
+        title.html("<![CDATA[" + parsedTitle + "]]>")
+
         const content = $(element).find("content\\:encoded")
 
         let body = content.text();
 
-        const html = cheerio.load(body, null, false);
+        const regexImgWithCaption = /(\[caption)(.*?)(\[\/caption])/gs;
+
+        body = body.replace(regexImgWithCaption, (match) => {
+            const regexImgTag = /(?<=])(.*?)(?<=>)/gs;
+            const regexCaption = /(?<=> )(.*?)(?=\[)/gs;
+
+            const imgTag = match.match(regexImgTag)[0];
+            const caption = match.match(regexCaption);
+
+            const modified = imgTag.slice(0, -2) + `data-caption="${caption}" data-title="${caption}"` + imgTag.slice(-2);
+
+            return modified;
+        });
+
+        const html = cheerio.load(body, { decodeEntities: false }, false);
 
         html("img").each((_, img) => {
             const src = html(img).attr("src");
@@ -44,7 +64,7 @@ $("item").each((_, element) => {
             html(img).attr("src", newSrc);
         });
 
-        $(element).find("content\\:encoded").replaceWith("<content:encoded><![CDATA[" + html.html() + "]]></content:encoded>");
+        $(element).find("content\\:encoded").replaceWith("<content:encoded><![CDATA[" + html.html({ xml: true }) + "]]></content:encoded>");
     }
 
     if (postType === 'attachment') {
@@ -62,7 +82,7 @@ $("item").each((_, element) => {
 console.log("-------------------------------------------------------")
 console.log("-------------------Writing XML file--------------------")
 console.log("-------------------------------------------------------")
-fs.writeFileSync("./modified.xml", $.xml());
+fs.writeFileSync("./modified.xml", $.html({ xml: true }));
 
 function changeURL(src, keepDomain = false) {
 
