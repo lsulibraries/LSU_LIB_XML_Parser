@@ -1,6 +1,7 @@
 const fs = require("fs");
 const moment = require("moment");
 const cheerio = require("cheerio");
+const axios = require('axios').default;
 
 const path = "https://libwebtest3.lsu.edu/sites/default/files/featured_images";
 
@@ -19,6 +20,8 @@ $("wp\\:term").remove();
 console.log("-------------------------------------------------------")
 console.log("--------------------Modifying URLs---------------------")
 console.log("-------------------------------------------------------")
+
+const promises = []
 
 $("item").each((_, element) => {
     const postType = $(element).find("wp\\:post_type").text()
@@ -54,17 +57,37 @@ $("item").each((_, element) => {
             return modified;
         });
 
-        const html = cheerio.load(body, { decodeEntities: false }, false);
+        const regexEmbed = /(\[embed)(.*?)(\[\/embed])/gs;
 
-        html("img").each((_, img) => {
-            const src = html(img).attr("src");
+        let promise = replaceAsync(body, regexEmbed, async (match) => {
+            const regexURL = /(?<=\])(.*?)(?=\[)/gs;
+            const url = match.match(regexURL)[0];
+            const modifiedURL = "https://" + cheerio.load(url).text().split("/").slice(-2).join("/")
 
-            const newSrc = changeURL(src)
+            const response = await axios.get(`https://www.youtube.com/oembed?url=${modifiedURL}&format=json`);
 
-            html(img).attr("src", newSrc);
-        });
+            const modified = response.data.html;
 
-        $(element).find("content\\:encoded").replaceWith("<content:encoded><![CDATA[" + html.html({ xml: true }) + "]]></content:encoded>");
+            return modified
+        })
+
+        promises.push(promise)
+
+        promise.then((modifiedStr) => {
+
+            const html = cheerio.load(modifiedStr, { decodeEntities: false }, false);
+
+            html("img").each((_, img) => {
+                const src = html(img).attr("src");
+
+                const newSrc = changeURL(src)
+
+                html(img).attr("src", newSrc);
+            });
+
+            $(element).find("content\\:encoded").html("<![CDATA[" + html.html({ xml: true }) + "]]>");
+        })
+
     }
 
     if (postType === 'attachment') {
@@ -77,12 +100,16 @@ $("item").each((_, element) => {
         attachmentURL.text(newSrc)
 
     }
+
 })
 
-console.log("-------------------------------------------------------")
-console.log("-------------------Writing XML file--------------------")
-console.log("-------------------------------------------------------")
-fs.writeFileSync("./modified.xml", $.html({ xml: true }));
+
+Promise.all(promises).then(() => {
+    console.log("-------------------------------------------------------")
+    console.log("-------------------Writing XML file--------------------")
+    console.log("-------------------------------------------------------")
+    fs.writeFileSync("./modified.xml", $.html({ xml: true }));
+})
 
 function changeURL(src, keepDomain = false) {
 
@@ -126,4 +153,14 @@ function stripFileName(file) {
     }
 
     return newFileName + "." + fileExtension;
+}
+
+async function replaceAsync(str, regex, asyncFn) {
+    const promises = [];
+    str.replace(regex, (match, ...args) => {
+        const promise = asyncFn(match, ...args);
+        promises.push(promise);
+    });
+    const data = await Promise.all(promises);
+    return str.replace(regex, () => data.shift());
 }
